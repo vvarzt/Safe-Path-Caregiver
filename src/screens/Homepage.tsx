@@ -41,7 +41,9 @@ export default function Homepage() {
   const [caregiver_Gender, setcaregiver_Gender] = useState<string | null>(null);
   const [showUpdateSuccess, setShowUpdateSuccess] = useState(false);
   const isWaitingApprove = activeJob?.update_cus === "wait_cus";
-  
+
+
+
 
 
   const closePopup = () => {
@@ -89,76 +91,80 @@ export default function Homepage() {
     });
   };
 
+  const handleStartJob = () => {
+    Alert.alert(
+      "เริ่มงาน",
+      "ยืนยันการเริ่มงาน?",
+      [
+        { text: "ยกเลิก", style: "cancel" },
+        {
+          text: "ยืนยัน",
+          onPress: () => {
+            setShowFaceScan(true); // 👉 เปิดสแกนหน้า
+          },
+        },
+      ]
+    );
+  };
 
   const handleUpdateCus = async () => {
-    if (!activeJob?.id) return;
+  if (!activeJob?.id) return;
 
-    try {
-      let nextStatus = null;
+  const current = activeJob.update_cus;
 
-      if (!activeJob.update_cus) {
-        nextStatus = "received";
-      } else if (activeJob.update_cus === "received") {
-        nextStatus = "destination";
-      } else if (activeJob.update_cus === "destination") {
-        nextStatus = "back";
-      } else if (activeJob.update_cus === "back") {
+  let nextStatus = null;
+  let confirmText = "";
 
-        // 🔥 STEP สุดท้าย → confirm ก่อน
-        Alert.alert(
-          "ยืนยันจบงาน",
-          "คุณแน่ใจหรือไม่ว่าต้องการจบงานนี้?",
-          [
-            { text: "ยกเลิก", style: "cancel" },
-            {
-              text: "ยืนยัน",
-              style: "destructive",
-              onPress: async () => {
-                try {
-                  // 🔥 อัปเดต booking ก่อน
-                  await updateDoc(doc(db, "bookings", activeJob.id), {
-                    update_cus: "wait_cus",
-                  });
+  if (!current) {
+    nextStatus = "received";
+    confirmText = "ยืนยันรับลูกค้าแล้ว?";
+  } else if (current === "received") {
+    nextStatus = "destination";
+    confirmText = "ถึงปลายทางแล้วใช่ไหม?";
+  } else if (current === "destination") {
+    nextStatus = "back";
+    confirmText = "กำลังกลับต้นทาง?";
+  } else if (current === "back") {
+    confirmText = "ต้องการจบงานใช่ไหม?";
+  }
 
-                  // 🔥 แล้วค่อยเปลี่ยน caregiver เป็น wait
-                  await updateDoc(doc(db, "caregivers", data.uid), {
-                    statusWork: "wait",
-                  });
+  Alert.alert("ยืนยัน", confirmText, [
+    { text: "ยกเลิก", style: "cancel" },
+    {
+      text: "ยืนยัน",
+      onPress: async () => {
+        try {
+          // 🔥 FINAL STEP
+          if (current === "back") {
+            await updateDoc(doc(db, "bookings", activeJob.id), {
+              update_cus: "wait_cus",
+            });
 
-                  setActiveJob((prev: any) => ({
-                    ...prev,
-                    update_cus: "wait_cus",
-                  }));
+            await updateDoc(doc(db, "caregivers", data.uid), {
+              statusWork: "wait",
+            });
 
-                  setWaitingComplete(true);
-                  console.log("⏳ รอ booking completed...");
-                } catch (err) {
-                  console.log("❌ FINAL STEP ERROR:", err);
-                }
-              }
-            },
-          ]
-        );
+            setWaitingComplete(true);
+            return;
+          }
 
-        return;
-      }
+          await updateDoc(doc(db, "bookings", activeJob.id), {
+            update_cus: nextStatus,
+          });
 
-      await updateDoc(doc(db, "bookings", activeJob.id), {
-        update_cus: nextStatus,
-      });
+          setActiveJob((prev: any) => ({
+            ...prev,
+            update_cus: nextStatus,
+          }));
 
-      setActiveJob((prev: any) => ({
-        ...prev,
-        update_cus: nextStatus,
-      }));
-
-      setShowUpdateSuccess(true);
-      setTimeout(() => setShowUpdateSuccess(false), 2000);
-      Alert.alert("สำเร็จ", "อัปเดตสถานะเรียบร้อยแล้ว");
-    } catch (err) {
-      console.log("❌ update_cus error:", err);
-    }
-  };
+          Alert.alert("สำเร็จ", "อัปเดตเรียบร้อย");
+        } catch (err) {
+          console.log(err);
+        }
+      },
+    },
+  ]);
+};
 
   const getUpdateCusLabel = () => {
     if (!activeJob?.update_cus) return "รับลูกค้าแล้ว";
@@ -172,82 +178,39 @@ export default function Homepage() {
   const [jobList, setJobList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const handleAcceptJob = async (jobId: string) => {
-    try {
-      const userId = data?.uid;
-      if (!userId) return;
+    Alert.alert(
+      "ยืนยันรับงาน",
+      "คุณต้องการรับงานนี้ใช่หรือไม่?",
+      [
+        { text: "ยกเลิก", style: "cancel" },
+        {
+          text: "ยืนยัน",
+          onPress: async () => {
+            try {
+              const userId = data?.uid;
+              if (!userId) return;
 
-      let caregiverName = `${data?.firstName || ""} ${data?.lastName || ""}`.trim();
+              const acceptedAt = new Date().toISOString();
 
-      if (!caregiverName) {
-        const q = query(collection(db, "caregiver"), where("uid", "==", userId));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const c = snap.docs[0].data();
-          caregiverName = `${c.firstName || ""} ${c.lastName || ""}`.trim();
-        }
-      }
+              await updateDoc(doc(db, "bookings", jobId), {
+                status: "accepted",
+                caregiverId: userId,
+                acceptedAt,
+              });
 
-      const acceptedAt = new Date().toISOString();
+              await updateDoc(doc(db, "caregivers", userId), {
+                statusWork: "working",
+              });
 
-      await updateDoc(doc(db, "bookings", jobId), {
-        status: "accepted", // ✔️ ตรงนี้ต้องเปลี่ยน
-        caregiverId: userId,
-        caregiverName,
-        acceptedAt,
-      });
+              setShowSuccess(true);
 
-      await updateDoc(doc(db, "caregivers", userId), {
-        statusWork: "working",
-      });
-
-      // ✅ ดึงข้อมูลมา set activeJob ทันที ไม่ต้องรอ login ใหม่
-      const bookingSnap = await getDoc(doc(db, "bookings", jobId));
-      if (bookingSnap.exists()) {
-        const jobData = bookingSnap.data();
-
-        let fullName = "ไม่พบชื่อ";
-        let phone = "-";
-
-        if (jobData.userId) {
-          const userSnap = await getDoc(doc(db, "users", jobData.userId));
-          if (userSnap.exists()) {
-            const u = userSnap.data();
-            fullName = u.fullname || u.fullName || u.name || "ไม่พบชื่อ";
-            phone = u.phone || "-";
-          }
-        }
-
-        setActiveJob({
-          id: jobId,
-          fullName,
-          phone,
-          dateBooking: jobData.dateBooking || "-",
-          timeBooking: jobData.timeBooking || "-",
-          caregiver_Gender: jobData.gender_Care || "-",
-          equipment: jobData.equipment || [],
-          fare: jobData.fare || 0,
-          distance: jobData.distance || 0,
-          paymentMethod: jobData.paymentMethod || "-",
-          status: "accepted",
-          acceptedAt,
-          fromAddress: jobData.fromLocation?.address || "-",
-          toAddress: jobData.toLocation?.address || "-",
-          fromLat: jobData.fromLocation?.lat || null,
-          fromLng: jobData.fromLocation?.lng || null,
-          toLat: jobData.toLocation?.lat || null,
-          toLng: jobData.toLocation?.lng || null,
-          update_cus: jobData.update_cus || null,
-        });
-
-        setIsStarted(false);
-      }
-
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 2000);
-
-    } catch (error) {
-      console.log("❌ ACCEPT ERROR:", error);
-    }
+            } catch (err) {
+              console.log(err);
+            }
+          },
+        },
+      ]
+    );
   };
 
   useEffect(() => {
@@ -784,7 +747,7 @@ export default function Homepage() {
                     marginTop: 10,
                   },
                 ]}
-                onPress={handleUpdateCus}
+                onPress={handleStartJob}
               >
                 <Text style={styles.acceptButtonText}>เริ่มงาน</Text>
               </TouchableOpacity>
@@ -796,13 +759,19 @@ export default function Homepage() {
               onCancel={() => setShowFaceScan(false)}
               onSuccess={async () => {
                 setShowFaceScan(false);
-                // Logic เดิม
+
                 await updateDoc(doc(db, "bookings", activeJob.id), {
                   status: "in_progress",
                   startedAt: new Date().toISOString(),
                 });
+
                 setIsStarted(true);
-                setActiveJob((prev: any) => ({ ...prev, status: "in_progress" }));
+                setActiveJob((prev: any) => ({
+                  ...prev,
+                  status: "in_progress",
+                }));
+
+                Alert.alert("สำเร็จ", "เริ่มงานแล้ว");
               }}
             />
             {/* 🧭 NAV + CALL */}
