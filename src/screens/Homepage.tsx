@@ -27,8 +27,8 @@ import {
 import { useSignup } from "../context/SignupContext";
 
 export default function Homepage() {
-  const navigation = useNavigation<NavProp>();
   type NavProp = NativeStackNavigationProp<RootStackParamList>;
+  const navigation = useNavigation<NavProp>();
   const [waitingComplete, setWaitingComplete] = useState(false);
   const [showJobDone, setShowJobDone] = useState(false);
   const [isStarted, setIsStarted] = useState(false);
@@ -41,7 +41,10 @@ export default function Homepage() {
   const [caregiver_Gender, setcaregiver_Gender] = useState<string | null>(null);
   const [showUpdateSuccess, setShowUpdateSuccess] = useState(false);
   const isWaitingApprove = activeJob?.update_cus === "wait_cus";
-
+  const [review, setReview] = useState<{ score: number; comment: string }>({
+    score: 0,
+    comment: "",
+  });
 
 
 
@@ -108,63 +111,63 @@ export default function Homepage() {
   };
 
   const handleUpdateCus = async () => {
-  if (!activeJob?.id) return;
+    if (!activeJob?.id) return;
 
-  const current = activeJob.update_cus;
+    const current = activeJob.update_cus;
 
-  let nextStatus = null;
-  let confirmText = "";
+    let nextStatus = null;
+    let confirmText = "";
 
-  if (!current) {
-    nextStatus = "received";
-    confirmText = "ยืนยันรับลูกค้าแล้ว?";
-  } else if (current === "received") {
-    nextStatus = "destination";
-    confirmText = "ถึงปลายทางแล้วใช่ไหม?";
-  } else if (current === "destination") {
-    nextStatus = "back";
-    confirmText = "กำลังกลับต้นทาง?";
-  } else if (current === "back") {
-    confirmText = "ต้องการจบงานใช่ไหม?";
-  }
+    if (!current) {
+      nextStatus = "received";
+      confirmText = "ยืนยันรับลูกค้าแล้ว?";
+    } else if (current === "received") {
+      nextStatus = "destination";
+      confirmText = "ถึงปลายทางแล้วใช่ไหม?";
+    } else if (current === "destination") {
+      nextStatus = "back";
+      confirmText = "กำลังกลับต้นทาง?";
+    } else if (current === "back") {
+      confirmText = "ต้องการจบงานใช่ไหม?";
+    }
 
-  Alert.alert("ยืนยัน", confirmText, [
-    { text: "ยกเลิก", style: "cancel" },
-    {
-      text: "ยืนยัน",
-      onPress: async () => {
-        try {
-          // 🔥 FINAL STEP
-          if (current === "back") {
+    Alert.alert("ยืนยัน", confirmText, [
+      { text: "ยกเลิก", style: "cancel" },
+      {
+        text: "ยืนยัน",
+        onPress: async () => {
+          try {
+            // 🔥 FINAL STEP
+            if (current === "back") {
+              await updateDoc(doc(db, "bookings", activeJob.id), {
+                update_cus: "wait_cus",
+              });
+
+              await updateDoc(doc(db, "caregivers", data.uid), {
+                statusWork: "wait",
+              });
+
+              setWaitingComplete(true);
+              return;
+            }
+
             await updateDoc(doc(db, "bookings", activeJob.id), {
-              update_cus: "wait_cus",
+              update_cus: nextStatus,
             });
 
-            await updateDoc(doc(db, "caregivers", data.uid), {
-              statusWork: "wait",
-            });
+            setActiveJob((prev: any) => ({
+              ...prev,
+              update_cus: nextStatus,
+            }));
 
-            setWaitingComplete(true);
-            return;
+            Alert.alert("สำเร็จ", "อัปเดตเรียบร้อย");
+          } catch (err) {
+            console.log(err);
           }
-
-          await updateDoc(doc(db, "bookings", activeJob.id), {
-            update_cus: nextStatus,
-          });
-
-          setActiveJob((prev: any) => ({
-            ...prev,
-            update_cus: nextStatus,
-          }));
-
-          Alert.alert("สำเร็จ", "อัปเดตเรียบร้อย");
-        } catch (err) {
-          console.log(err);
-        }
+        },
       },
-    },
-  ]);
-};
+    ]);
+  };
 
   const getUpdateCusLabel = () => {
     if (!activeJob?.update_cus) return "รับลูกค้าแล้ว";
@@ -459,6 +462,12 @@ export default function Homepage() {
       if (!snap.exists()) return;
 
       const d = snap.data();
+      if (d.score || d.comment) {
+        setReview({
+          score: d.score,
+          comment: d.comment,
+        });
+      }
       console.log("📦 booking status:", d.status);
 
       // ❌ กรณีโดนยกเลิก
@@ -493,7 +502,10 @@ export default function Homepage() {
 
           setWaitingComplete(false);
           setShowJobDone(true);
-
+          setReview({
+            score: d.score,
+            comment: d.comment,
+          });
           console.log("✅ งานเสร็จ");
         } catch (err) {
           console.log("❌ COMPLETE ERROR:", err);
@@ -968,7 +980,35 @@ export default function Homepage() {
             <Ionicons name="checkmark-circle" size={60} color="#3B82F6" />
 
             <Text style={styles.popupTitle}>งานเสร็จสิ้น!</Text>
-            <Text style={styles.popupText}>ขอบคุณที่ให้บริการ พร้อมรับงานใหม่แล้ว</Text>
+            <Text style={styles.popupText}>
+              ขอบคุณที่ให้บริการ พร้อมรับงานใหม่แล้ว
+            </Text>
+
+            {/* ⭐ แสดงดาว */}
+            {typeof review.score === "number" && (
+              <View style={{ flexDirection: "row", marginTop: 10 }}>
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <Ionicons
+                    key={i}
+                    name={i <= (review.score ?? 0) ? "star" : "star-outline"}
+                    size={20}
+                    color="#F59E0B"
+                  />
+                ))}
+              </View>
+            )}
+
+            {/* 💬 แสดงคอมเม้น */}
+            {review?.comment && (
+              <Text style={{
+                marginTop: 8,
+                fontSize: 13,
+                color: "#374151",
+                textAlign: "center"
+              }}>
+                "{review.comment}"
+              </Text>
+            )}
 
             <TouchableOpacity
               style={[styles.popupButton, { backgroundColor: "#3B82F6" }]}
@@ -976,6 +1016,10 @@ export default function Homepage() {
                 setShowJobDone(false);
                 setActiveJob(null);
                 setIsStarted(false);
+                setReview({
+                  score: 0,
+                  comment: "",
+                }); // ✅ reset
               }}
             >
               <Text style={styles.popupButtonText}>ตกลง</Text>
