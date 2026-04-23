@@ -29,6 +29,7 @@ type Signup1NavProp = NativeStackNavigationProp<RootStackParamList, "Signup1">;
 export default function Signup1Screen() {
   const navigation = useNavigation<Signup1NavProp>();
   const { setData } = useSignup();
+  const [loading, setLoading] = useState(false);
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -55,6 +56,12 @@ export default function Signup1Screen() {
   const passwordRef = useRef<TextInput>(null);
   const confirmPasswordRef = useRef<TextInput>(null);
   const phoneRef = useRef<TextInput>(null);
+
+  const mapGenderToDB = (g: string) => {
+    if (g === "ชาย") return "male";
+    if (g === "หญิง") return "female";
+    return "other";
+  };
 
   /* ================= PHONE ================= */
   const formatPhone = (text: string) => {
@@ -128,11 +135,16 @@ export default function Signup1Screen() {
     if (!validate()) return;
 
     try {
-      // 🔥 สร้าง user ก่อน
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      setLoading(true); // ✅ เริ่มโหลด
+
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
+
       const uid = userCredential.user.uid;
 
-      // 🔥 เก็บ uid ลง context
       setData((prev) => ({
         ...prev,
         uid,
@@ -148,9 +160,12 @@ export default function Signup1Screen() {
       }));
 
       navigation.navigate("Signup2");
+
     } catch (error: any) {
       console.log(error);
       Alert.alert("Error", error.message);
+    } finally {
+      setLoading(false); // ✅ จบโหลด
     }
   };
 
@@ -163,15 +178,15 @@ export default function Signup1Screen() {
       extraScrollHeight={100}   // 👈 สำคัญ
       contentContainerStyle={{ paddingBottom: 80 }}
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>        
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <View style={{ flex: 1 }}>
-        {/* HEADER */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Text style={styles.back}>←</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>สร้างบัญชี</Text>
-        </View>
+          {/* HEADER */}
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => navigation.goBack()}>
+              <Text style={styles.back}>←</Text>
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>สร้างบัญชี</Text>
+          </View>
 
           <View style={styles.container}>
             <View style={styles.content}>
@@ -281,11 +296,13 @@ export default function Signup1Screen() {
                 {["ชาย", "หญิง", "อื่นๆ"].map((g) => (
                   <TouchableOpacity
                     key={g}
-                    onPress={() => setGender(g)}
+                    onPress={() => setGender(mapGenderToDB(g))}
                     style={{ flexDirection: "row", marginRight: 15 }}
                   >
                     <View style={styles.radio}>
-                      {gender === g && <View style={styles.radioActive} />}
+                      {gender === mapGenderToDB(g) && (
+                        <View style={styles.radioActive} />
+                      )}
                     </View>
                     <Text>{g}</Text>
                   </TouchableOpacity>
@@ -409,14 +426,19 @@ export default function Signup1Screen() {
                 style={[
                   styles.nextButton,
                   { backgroundColor: isEnabled ? "#43B7A5" : "#ccc" },
+                  loading && { opacity: 0.6 }
                 ]}
                 onPress={handleNext}
+                disabled={!isEnabled || loading}
+
               >
-                <Text style={styles.nextText}>ถัดไป</Text>
+                <Text style={styles.nextText}>
+                  {loading ? "กำลังสร้างบัญชี..." : "ถัดไป"}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
-      </View>
+        </View>
       </TouchableWithoutFeedback>
     </KeyboardAwareScrollView>
   );

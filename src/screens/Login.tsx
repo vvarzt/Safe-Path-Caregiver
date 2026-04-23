@@ -72,12 +72,42 @@ export default function LoginScreen() {
 
       const userData = docSnap.data();
 
+      // ✅ เช็ค role
       if (userData.status !== "caregiver") {
-        Alert.alert("บัญชีไม่ใช่ caregiver");
+        Alert.alert("บัญชีนี้ไม่ใช่ caregiver");
         return;
       }
 
-      // ✅ context session
+      // 🔥 เช็ค approve
+      // 🔥 เช็ค approve
+      if (!userData.isApproved) {
+
+        const session = {
+          uid,
+          firstName: userData.firstName,
+          lastName: userData.lastName,
+          image: userData.image,
+          status: userData.status,
+          isApproved: userData.isApproved,
+        };
+
+        setData(session);
+        await AsyncStorage.setItem("session", JSON.stringify(session));
+
+        Alert.alert(
+          "รอการอนุมัติ",
+          "บัญชีของคุณกำลังรอการตรวจสอบจากแอดมิน",
+          [
+            {
+              text: "ตกลง",
+              onPress: () => navigation.replace("SignupSuccess"),
+            },
+          ]
+        );
+        return;
+      }
+
+      // ✅ สร้าง session
       const session = {
         uid,
         firstName: userData.firstName,
@@ -88,10 +118,9 @@ export default function LoginScreen() {
       };
 
       setData(session);
-
-      // ✅ persist session
       await AsyncStorage.setItem("session", JSON.stringify(session));
 
+      // ✅ เข้า Home
       navigation.replace("MainTabs");
 
     } catch (error) {

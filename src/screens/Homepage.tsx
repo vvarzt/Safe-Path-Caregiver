@@ -1,11 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 import { onSnapshot } from "firebase/firestore";
 import React, { useEffect, useRef, useState } from "react";
+import { Alert } from "react-native";
 import AppHeader from "../components/AppHeader";
-import { db } from "../firebase";
 import FaceScanModal from "../components/FaceScanModal";
+import { auth, db } from "../firebase";
+import { RootStackParamList } from "../navigation/AppNavigator";
+import { runTransaction } from "firebase/firestore";
 
 import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
 
@@ -22,6 +27,8 @@ import {
 import { useSignup } from "../context/SignupContext";
 
 export default function Homepage() {
+  const navigation = useNavigation<NavProp>();
+  type NavProp = NativeStackNavigationProp<RootStackParamList>;
   const [waitingComplete, setWaitingComplete] = useState(false);
   const [showJobDone, setShowJobDone] = useState(false);
   const [isStarted, setIsStarted] = useState(false);
@@ -31,6 +38,12 @@ export default function Homepage() {
   const [open, setOpen] = useState(false);
   const slideAnim = useRef(new Animated.Value(-300)).current;
   const [showFaceScan, setShowFaceScan] = useState(false);
+  const [caregiver_Gender, setcaregiver_Gender] = useState<string | null>(null);
+  const [showUpdateSuccess, setShowUpdateSuccess] = useState(false);
+  const isWaitingApprove = activeJob?.update_cus === "wait_cus";
+  
+
+
   const closePopup = () => {
     setShowSuccess(false);
   };
@@ -75,6 +88,87 @@ export default function Homepage() {
       minute: "2-digit",
     });
   };
+
+
+  const handleUpdateCus = async () => {
+    if (!activeJob?.id) return;
+
+    try {
+      let nextStatus = null;
+
+      if (!activeJob.update_cus) {
+        nextStatus = "received";
+      } else if (activeJob.update_cus === "received") {
+        nextStatus = "destination";
+      } else if (activeJob.update_cus === "destination") {
+        nextStatus = "back";
+      } else if (activeJob.update_cus === "back") {
+
+        // 🔥 STEP สุดท้าย → confirm ก่อน
+        Alert.alert(
+          "ยืนยันจบงาน",
+          "คุณแน่ใจหรือไม่ว่าต้องการจบงานนี้?",
+          [
+            { text: "ยกเลิก", style: "cancel" },
+            {
+              text: "ยืนยัน",
+              style: "destructive",
+              onPress: async () => {
+                try {
+                  // 🔥 อัปเดต booking ก่อน
+                  await updateDoc(doc(db, "bookings", activeJob.id), {
+                    update_cus: "wait_cus",
+                  });
+
+                  // 🔥 แล้วค่อยเปลี่ยน caregiver เป็น wait
+                  await updateDoc(doc(db, "caregivers", data.uid), {
+                    statusWork: "wait",
+                  });
+
+                  setActiveJob((prev: any) => ({
+                    ...prev,
+                    update_cus: "wait_cus",
+                  }));
+
+                  setWaitingComplete(true);
+                  console.log("⏳ รอ booking completed...");
+                } catch (err) {
+                  console.log("❌ FINAL STEP ERROR:", err);
+                }
+              }
+            },
+          ]
+        );
+
+        return;
+      }
+
+      await updateDoc(doc(db, "bookings", activeJob.id), {
+        update_cus: nextStatus,
+      });
+
+      setActiveJob((prev: any) => ({
+        ...prev,
+        update_cus: nextStatus,
+      }));
+
+      setShowUpdateSuccess(true);
+      setTimeout(() => setShowUpdateSuccess(false), 2000);
+      Alert.alert("สำเร็จ", "อัปเดตสถานะเรียบร้อยแล้ว");
+    } catch (err) {
+      console.log("❌ update_cus error:", err);
+    }
+  };
+
+  const getUpdateCusLabel = () => {
+    if (!activeJob?.update_cus) return "รับลูกค้าแล้ว";
+    if (activeJob.update_cus === "received") return "ถึงปลายทางแล้ว";
+    if (activeJob.update_cus === "destination") return "กลับต้นทาง";
+    if (activeJob.update_cus === "back") return "เสร็จสิ้น";
+    if (activeJob.update_cus === "wait_cus") return "รอการอนุมัติ";
+    return "ดำเนินการ";
+  };
+  const isFinalStep = activeJob?.update_cus === "back";
   const [jobList, setJobList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const handleAcceptJob = async (jobId: string) => {
@@ -96,7 +190,7 @@ export default function Homepage() {
       const acceptedAt = new Date().toISOString();
 
       await updateDoc(doc(db, "bookings", jobId), {
-        status: "accepted",
+        status: "accepted", // ✔️ ตรงนี้ต้องเปลี่ยน
         caregiverId: userId,
         caregiverName,
         acceptedAt,
@@ -129,7 +223,7 @@ export default function Homepage() {
           phone,
           dateBooking: jobData.dateBooking || "-",
           timeBooking: jobData.timeBooking || "-",
-          passengerType: jobData.passengerType || "-",
+          caregiver_Gender: jobData.gender_Care || "-",
           equipment: jobData.equipment || [],
           fare: jobData.fare || 0,
           distance: jobData.distance || 0,
@@ -142,6 +236,7 @@ export default function Homepage() {
           fromLng: jobData.fromLocation?.lng || null,
           toLat: jobData.toLocation?.lat || null,
           toLng: jobData.toLocation?.lng || null,
+          update_cus: jobData.update_cus || null,
         });
 
         setIsStarted(false);
@@ -154,6 +249,30 @@ export default function Homepage() {
       console.log("❌ ACCEPT ERROR:", error);
     }
   };
+
+  useEffect(() => {
+    if (!data?.uid) return;
+
+    const fetchGender = async () => {
+      try {
+        const snap = await getDoc(doc(db, "caregivers", data.uid));
+
+        if (snap.exists()) {
+          const c = snap.data();
+          console.log("👤 caregiver gender:", c.gender);
+
+          setcaregiver_Gender(c.gender);
+        } else {
+          console.log("❌ ไม่เจอ caregiver");
+        }
+      } catch (err) {
+        console.log("❌ fetch gender error:", err);
+      }
+    };
+
+    fetchGender();
+  }, [data?.uid]);
+
   // ✅ Real-time listener สำหรับ caregiver statusWork
   useEffect(() => {
     if (!data?.uid) return;
@@ -161,8 +280,39 @@ export default function Homepage() {
     const caregiverRef = doc(db, "caregivers", data.uid);
 
     const unsubscribe = onSnapshot(caregiverRef, async (snap) => {
-      if (!snap.exists()) return;
 
+      // ✅ 🔥 เพิ่มตรงนี้
+      if (!snap.exists()) {
+        console.log("❌ caregiver ถูกลบแล้ว");
+
+        Alert.alert(
+          "บัญชีถูกลบ",
+          "บัญชีของคุณถูกลบโดยผู้ดูแลระบบ",
+          [
+            {
+              text: "ตกลง",
+              onPress: async () => {
+                try {
+                  await auth.signOut(); // logout firebase
+                } catch (e) {
+                  console.log("logout error:", e);
+                }
+
+                // 🔥 reset context
+                setData({} as any);
+
+                // 🔥 กลับหน้า welcome
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: "Welcome" }],
+                });
+              },
+            },
+          ]
+        );
+
+        return;
+      }
       const c = snap.data();
       console.log("🔥 caregiver status:", c.statusWork);
 
@@ -223,7 +373,7 @@ export default function Homepage() {
           phone,
           dateBooking: jobData.dateBooking || "-",
           timeBooking: jobData.timeBooking || "-",
-          passengerType: jobData.passengerType || "-",
+          caregiver_Gender: jobData.gender_Care || "-",
           equipment: jobData.equipment || [],
           fare: jobData.fare || 0,
           distance: jobData.distance || 0,
@@ -236,6 +386,7 @@ export default function Homepage() {
           fromLng: jobData.fromLocation?.lng || null,
           toLat: jobData.toLocation?.lat || null,
           toLng: jobData.toLocation?.lng || null,
+          update_cus: jobData.update_cus || null,
         });
       }
     });
@@ -244,73 +395,100 @@ export default function Homepage() {
   }, [data?.uid, waitingComplete]); // 👈 เพิ่ม waitingComplete ใน deps
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "bookings"), async (snapshot) => {
-      try {
-        console.log("🔥 Realtime update:", snapshot.size);
+    console.log("📊 gender:", data?.gender); // 👈 เพิ่มบรรทัดนี้
 
-        const bookings = await Promise.all(
-          snapshot.docs.map(async (docSnap) => {
-            const d = docSnap.data();
+    if (!caregiver_Gender) {
+      console.log("❌ gender ยังไม่มี");
+      return;
+    }
 
-            let fullName = "ไม่พบชื่อ";
-            let phone = "-";
+    const unsubscribe = onSnapshot(
+      query(
+        collection(db, "bookings"),
+        where("status", "==", "pending"),
+        where("gender_Care", "in", [
+          "disabled",
+          caregiver_Gender,
+        ])
 
-            if (d.userId) {
-              try {
-                const userSnap = await getDoc(doc(db, "users", d.userId));
-                if (userSnap.exists()) {
-                  const u = userSnap.data();
-                  fullName = u.fullname || u.fullName || u.name || "ไม่พบชื่อ";
-                  phone = u.phone || "-";
+
+      ),
+      async (snapshot) => {
+        console.log("📦 snapshot size:", snapshot.size); // 👈 เพิ่ม
+        console.log("📊 caregiver_Gender:", caregiver_Gender);
+        snapshot.forEach(doc => {
+          console.log("📄 job data:", doc.data()); // 👈 เพิ่ม
+        });
+
+        try {
+          console.log("🔥 Realtime update:", snapshot.size);
+
+          const bookings = await Promise.all(
+            snapshot.docs.map(async (docSnap) => {
+              const d = docSnap.data();
+
+              let fullName = "ไม่พบชื่อ";
+              let phone = "-";
+
+              if (d.userId) {
+                try {
+                  const userSnap = await getDoc(doc(db, "users", d.userId));
+                  if (userSnap.exists()) {
+                    const u = userSnap.data();
+                    fullName = u.fullname || u.fullName || u.name || "ไม่พบชื่อ";
+                    phone = u.phone || "-";
+                  }
+                } catch (e) {
+                  console.log("❌ USER ERROR:", e);
                 }
-              } catch (e) {
-                console.log("❌ USER ERROR:", e);
               }
-            }
 
-            return {
-              id: docSnap.id,
-              fullName,
-              phone,
-              dateBooking: d.dateBooking || "-",
-              timeBooking: d.timeBooking || "-",
-              passengerType: d.passengerType || "-",
-              equipment: d.equipment || [],
+              return {
+                id: docSnap.id,
+                fullName,
+                phone,
+                dateBooking: d.dateBooking || "-",
+                timeBooking: d.timeBooking || "-",
+                caregiver_Gender: d.gender_Care || "-",
+                equipment: d.equipment || [],
 
-              // ✅ ใช้ location ใหม่
-              fromAddress: d.fromLocation?.address || "-",
-              toAddress: d.toLocation?.address || "-",
+                // ✅ ใช้ location ใหม่
+                fromAddress: d.fromLocation?.address || "-",
+                toAddress: d.toLocation?.address || "-",
 
-              fromLat: d.fromLocation?.lat || null,
-              fromLng: d.fromLocation?.lng || null,
-              toLat: d.toLocation?.lat || null,
-              toLng: d.toLocation?.lng || null,
+                fromLat: d.fromLocation?.lat || null,
+                fromLng: d.fromLocation?.lng || null,
+                toLat: d.toLocation?.lat || null,
+                toLng: d.toLocation?.lng || null,
 
-              fare: d.fare ?? 0,
-              status: d.status || "pending",
-              paymentMethod: d.paymentMethod || "-",
-            };
-          })
-        );
+                fare: d.fare ?? 0,
+                status: d.status || "pending",
+                paymentMethod: d.paymentMethod || "-",
+              };
+            })
+          );
 
-        // ✅ filter pending เท่านั้น
-        const pendingOnly = bookings.filter((job) => job.status === "pending");
-
-        setJobList(pendingOnly);
-      } catch (err) {
-        console.log("❌ SNAPSHOT ERROR:", err);
-      } finally {
-        setLoading(false);
-      }
-    });
+          // ✅ filter pending เท่านั้น
+          console.log("✅ bookings ที่ได้:", bookings); // 👈 เพิ่ม
+          console.log("🎯 query gender:", caregiver_Gender);
+          setJobList(bookings);
+        } catch (err) {
+          console.log("❌ SNAPSHOT ERROR:", err);
+        } finally {
+          setLoading(false);
+        }
+      },
+      (error) => {
+        console.log("❌ SNAPSHOT ERROR:", error); // 👈 เพิ่มตรงนี้
+      });
 
     // ✅ สำคัญมาก (cleanup กัน memory leak)
     return () => unsubscribe();
-  }, []);
+  }, [caregiver_Gender]); // ✅ แก้ตรงนี้
 
   // ✅ คอย booking เปลี่ยนเป็น completed → แก้ statusWork เป็น idle
   useEffect(() => {
-    if (!activeJob?.id || !waitingComplete) return;
+    if (!activeJob?.id) return;
 
     const bookingRef = doc(db, "bookings", activeJob.id);
 
@@ -320,20 +498,48 @@ export default function Homepage() {
       const d = snap.data();
       console.log("📦 booking status:", d.status);
 
-      if (d.status === "completed") {
-        // ✅ อัปเดต caregiver เป็น idle
+      // ❌ กรณีโดนยกเลิก
+      if (d.status === "cancelled") {
+        console.log("❌ งานถูกยกเลิก");
+
+        Alert.alert("งานถูกยกเลิก", "ลูกค้าได้ยกเลิกงานนี้แล้ว");
+
+        // reset state
+        setActiveJob(null);
+        setIsStarted(false);
+        setWaitingComplete(false);
+
+        // 🔥 กลับไปโหมดหางาน
         await updateDoc(doc(db, "caregivers", data.uid), {
           statusWork: "idle",
         });
 
-        setWaitingComplete(false);
-        setShowJobDone(true); // 🎉 แจ้งเตือน
-        console.log("✅ งานเสร็จสิ้น → idle");
+        return;
+      }
+
+      // ✅ กรณีงานเสร็จ (เหมือนเดิม)
+      if (d.status === "completed") {
+        try {
+          await updateDoc(doc(db, "bookings", activeJob.id), {
+            completedAt: new Date().toISOString(),
+          });
+
+          await updateDoc(doc(db, "caregivers", data.uid), {
+            statusWork: "idle",
+          });
+
+          setWaitingComplete(false);
+          setShowJobDone(true);
+
+          console.log("✅ งานเสร็จ");
+        } catch (err) {
+          console.log("❌ COMPLETE ERROR:", err);
+        }
       }
     });
 
     return () => unsubscribe();
-  }, [activeJob?.id, waitingComplete]);
+  }, [activeJob?.id]);
 
   const fetchBookings = async () => {
     setLoading(true);
@@ -375,7 +581,7 @@ export default function Homepage() {
             phone,
             dateBooking: d.dateBooking || "-",
             timeBooking: d.timeBooking || "-",
-            passengerType: d.passengerType || "-",
+            caregiver_Gender: d.caregiver_Gender || "-",
             equipment: d.equipment || [],
 
             // ✅ ใช้ location ใหม่
@@ -413,11 +619,11 @@ export default function Homepage() {
     }).start(() => setOpen(!open));
   };
 
-  const passengerTypeLabel = (type: string) => {
+  const gender_CareTypeLabel = (type: string) => {
     const map: Record<string, string> = {
-      elderly: "ผู้สูงอายุ",
-      disabled: "ผู้พิการ",
-      patient: "ผู้ป่วย",
+      male: "ชาย",
+      disabled: "ไม่ระบุ",
+      female: "หญิง",
     };
     return map[type] || type;
   };
@@ -454,7 +660,8 @@ export default function Homepage() {
 
     return map[status] || status;
   };
-
+  console.log("🧠 activeJob:", activeJob);
+  console.log("📋 jobList:", jobList.length);
   return (
     <View style={styles.container}>
       <AppHeader />
@@ -509,7 +716,7 @@ export default function Homepage() {
             <View style={styles.rowItem}>
               <Ionicons name="accessibility-outline" size={18} color="#6B7280" />
               <Text style={styles.mainText}>
-                {passengerTypeLabel(activeJob.passengerType)}
+                {gender_CareTypeLabel(activeJob.caregiver_Gender)}
               </Text>
             </View>
 
@@ -570,8 +777,14 @@ export default function Homepage() {
             {/* 🔵 ปุ่ม "เริ่มงาน" (ใช้ตอนยังไม่เริ่มงาน) */}
             {activeJob?.status === "accepted" && (
               <TouchableOpacity
-                style={[styles.acceptButton, { backgroundColor: "#3B82F6", marginTop: 10 }]}
-                onPress={() => setShowFaceScan(true)} // 👈 เปิด modal แทน
+                style={[
+                  styles.acceptButton,
+                  {
+                    backgroundColor: isFinalStep ? "#EF4444" : "#3B82F6", // 🔥 เปลี่ยนตรงนี้
+                    marginTop: 10,
+                  },
+                ]}
+                onPress={handleUpdateCus}
               >
                 <Text style={styles.acceptButtonText}>เริ่มงาน</Text>
               </TouchableOpacity>
@@ -636,25 +849,18 @@ export default function Homepage() {
 {/* 🔴 ปุ่มสิ้นสุดงาน */}
             {isStarted && (
               <TouchableOpacity
-                style={[styles.acceptButton, { backgroundColor: "#EF4444", marginTop: 10 }]}
-                onPress={async () => {
-                  try {
-                    // 1. แก้ statusWork เป็น "wait" ก่อน
-                    await updateDoc(doc(db, "caregivers", data.uid), {
-                      statusWork: "wait",
-                    });
-
-                    // 2. เริ่มรอ booking เป็น completed
-                    setWaitingComplete(true);
-
-                    console.log("⏳ รอ booking completed...");
-                  } catch (err) {
-                    console.log("❌ END JOB ERROR:", err);
+                disabled={isWaitingApprove}
+                style={[
+                  styles.acceptButton,
+                  {
+                    backgroundColor: isWaitingApprove ? "#9CA3AF" : "#F59E0B",
+                    marginTop: 10
                   }
-                }}
+                ]}
+                onPress={handleUpdateCus}
               >
                 <Text style={styles.acceptButtonText}>
-                  {waitingComplete ? "⏳ รอยืนยันจากระบบ..." : "สิ้นสุดงาน"}
+                  {waitingComplete ? "⏳ รอยืนยันจากระบบ..." : getUpdateCusLabel()}
                 </Text>
               </TouchableOpacity>
             )}
@@ -704,7 +910,7 @@ export default function Homepage() {
               <View style={styles.rowItem}>
                 <Ionicons name="accessibility-outline" size={18} color="#6B7280" />
                 <Text style={styles.mainText}>
-                  {passengerTypeLabel(job.passengerType)}
+                  {gender_CareTypeLabel(job.caregiver_Gender)}
                 </Text>
               </View>
 
@@ -750,7 +956,18 @@ export default function Homepage() {
                   </TouchableOpacity>
                 </View>
               )}
+              {showUpdateSuccess && (
+                <View style={styles.popupOverlay}>
+                  <View style={styles.popupBox}>
 
+                    <Ionicons name="checkmark-circle" size={60} color="#3B82F6" />
+
+                    <Text style={styles.popupTitle}>อัปเดตสถานะแล้ว</Text>
+                    <Text style={styles.popupText}>สถานะถูกบันทึกเรียบร้อย</Text>
+
+                  </View>
+                </View>
+              )}
             </View>
           ))
         )}

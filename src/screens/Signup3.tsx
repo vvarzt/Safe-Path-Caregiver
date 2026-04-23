@@ -4,6 +4,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as ImagePicker from "expo-image-picker";
 import { doc, setDoc } from 'firebase/firestore';
 import React, { useState } from "react";
+import { uploadImage } from "../services/uploadImage";
 import {
   Alert,
   Image,
@@ -28,6 +29,7 @@ type NavProp = NativeStackNavigationProp<RootStackParamList, "Signup3">;
 export default function Signup3Screen() {
   const navigation = useNavigation<NavProp>();
   const { data, setData } = useSignup();
+  const [loading, setLoading] = useState(false);
 
   const [idCard, setIdCard] = useState<string | null>(null);
   const [house, setHouse] = useState<string | null>(null);
@@ -80,6 +82,27 @@ export default function Signup3Screen() {
     if (!validate()) return;
 
     try {
+      setLoading(true); // 🔥 เริ่มโหลด
+
+      const uid = data.uid;
+
+      const [
+        profileUrl,
+        idCardUrl,
+        houseUrl,
+        certUrl,
+        bookUrl,
+      ] = await Promise.all([
+        data.image
+          ? uploadImage(data.image, `caregivers/${uid}/profile.jpg`)
+          : Promise.resolve(null),
+
+        uploadImage(idCard!, `caregivers/${uid}/idCard.jpg`),
+        uploadImage(house!, `caregivers/${uid}/house.jpg`),
+        uploadImage(certificate!, `caregivers/${uid}/certificate.jpg`),
+        uploadImage(bookBank!, `caregivers/${uid}/bookBank.jpg`),
+      ]);
+
       const userData = {
         uid: data.uid,
         firstName: data.firstName,
@@ -88,37 +111,41 @@ export default function Signup3Screen() {
         phone: data.phone,
         gender: data.gender,
         birthDate: data.birthDate,
-        image: data.image,
+
+        image: profileUrl,
+        idCard: idCardUrl,
+        house: houseUrl,
+        certificate: certUrl,
+        bookBank: bookUrl,
+
         address: data.address,
         province: data.province,
         district: data.district,
         subdistrict: data.subdistrict,
         zipcode: data.zipcode,
-        idCard,
-        house,
-        certificate,
+
         bank,
         accountNumber,
-        bookBank,
+
         contactName,
         relation,
         contactPhone: contactPhone.replace(/-/g, ""),
+
         status: "caregiver",
-        statusWork: "idle",
         isApproved: false,
         createdAt: new Date(),
       };
 
-      // 🔥 บันทึกข้อมูลลง Firestore collection "caregivers" ด้วย uid เป็น document ID
-      await setDoc(doc(db, 'caregivers', data.uid), userData);
-
-      setData(userData);
+      await setDoc(doc(db, "caregivers", uid), userData);
 
       Alert.alert("สำเร็จ", "สมัครเรียบร้อย 🎉");
       navigation.navigate("SignupSuccess");
-    } catch (error: any) {
-      console.log(error);
-      Alert.alert("Error", error.message);
+
+    } catch (err) {
+      console.log(err);
+      Alert.alert("Error", "Upload ไม่สำเร็จ");
+    } finally {
+      setLoading(false); // 🔥 จบโหลด (สำคัญมาก!)
     }
   };
 
@@ -190,8 +217,8 @@ export default function Signup3Screen() {
       </TouchableOpacity>
     </>
   );
-console.log("Auth UID:", auth.currentUser?.uid);
-console.log("Data UID:", data.uid);
+  console.log("Auth UID:", auth.currentUser?.uid);
+  console.log("Data UID:", data.uid);
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -291,8 +318,14 @@ console.log("Data UID:", data.uid);
               onChangeText={(t) => setContactPhone(formatPhone(t))}
             />
 
-            <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
-              <Text style={styles.nextText}>สมัคร</Text>
+            <TouchableOpacity
+              style={[styles.nextButton, loading && { opacity: 0.6 }]}
+              onPress={handleNext}
+              disabled={loading}
+            >
+              <Text style={styles.nextText}>
+                {loading ? "กำลังลงทะเบียน..." : "สมัคร"}
+              </Text>
             </TouchableOpacity>
           </ScrollView>
         </View>

@@ -1,53 +1,70 @@
-import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-
+import React, { useEffect } from "react";
+import { StyleSheet, Text, View, ActivityIndicator } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/AppNavigator";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db, auth } from "../firebase";
 
-// ✅ type navigation
 type NavProp = NativeStackNavigationProp<RootStackParamList, "SignupSuccess">;
 
 export default function SignupSuccessScreen() {
   const navigation = useNavigation<NavProp>();
 
-  const handleNext = () => {
-    // 🔥 ใช้ replace จะย้อนกลับไป Signup ไม่ได้ (แนะนำ)
-    navigation.replace("MainTabs");
-  };
+  useEffect(() => {
+    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+      if (!user) return;
+
+      const unsub = onSnapshot(doc(db, "caregivers", user.uid), (snap) => {
+        console.log("DOC EXISTS:", snap.exists());
+
+        if (!snap.exists()) {
+          console.log("❌ ไม่มี document นี้");
+          return;
+        }
+
+        const data = snap.data();
+        console.log("🔥 FULL DATA:", data);
+
+        if (data.isApproved === true) {
+          navigation.reset({
+            index: 0,
+            routes: [{ name: "MainTabs" }],
+          });
+        }
+      });
+
+      return () => unsub();
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
 
   return (
     <View style={styles.container}>
+
       {/* ===== HEADER ===== */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.back}>←</Text>
-        </TouchableOpacity>
-
         <Text style={styles.headerTitle}>สร้างบัญชี</Text>
       </View>
 
       {/* ===== CONTENT ===== */}
       <View style={styles.content}>
-        <Text style={styles.icon}>⚠️</Text>
+        <ActivityIndicator size="large" color="#43B7A5" />
 
-        <Text style={styles.title}>รอตรวจสอบเอกสาร{"\n"}ประมาณ 1-2 วัน</Text>
+        <Text style={styles.title}>
+          รอตรวจสอบเอกสาร
+        </Text>
 
         <Text style={styles.subtitle}>
-          เมื่อการตรวจสอบเสร็จสิ้น จะแจ้งให้ทราบทางแอป
+          ระบบกำลังตรวจสอบข้อมูลของคุณ{"\n"}
+          ใช้เวลาประมาณ 1-2 วัน
         </Text>
       </View>
 
-      {/* ===== BUTTON ===== */}
-      <View style={styles.footer}>
-        <TouchableOpacity style={styles.button} onPress={handleNext}>
-          <Text style={styles.buttonText}>ถัดไป</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
-
 /* ===== STYLE ===== */
 
 const styles = StyleSheet.create({

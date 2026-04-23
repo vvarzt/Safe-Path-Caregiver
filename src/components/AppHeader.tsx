@@ -1,6 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import React, { useEffect, useRef, useState } from "react";
+import { signOut } from "firebase/auth";
+import { auth } from "../firebase";
+import { useNavigation } from "@react-navigation/native";
 import {
   Animated,
   Image,
@@ -9,18 +12,20 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { db } from "../firebase";
 import { useSignup } from "../context/SignupContext";
+import { db } from "../firebase";
 
 export default function AppHeader() {
   const { data } = useSignup();
   const [open, setOpen] = useState(false);
   const slideAnim = useRef(new Animated.Value(-300)).current;
+  const navigation = useNavigation<any>();
 
   // ✅ State สำหรับ stats
   const [pendingCount, setPendingCount] = useState(0);       // ออเดอร์วันนี้ (pending)
   const [completedCount, setCompletedCount] = useState(0);   // ออเดอร์ทั้งหมดที่ทำเสร็จ
   const [totalIncome, setTotalIncome] = useState(0);         // รายได้รวม 60%
+  const [totalWithdrawn, setTotalWithdrawn] = useState(0);   // ยอดถอนแล้ว
 
   // ✅ Listener 1: นับ pending bookings
   useEffect(() => {
@@ -59,6 +64,40 @@ export default function AppHeader() {
 
     return () => unsubscribe();
   }, [data?.uid]);
+const handleLogout = async () => {
+  try {
+    await signOut(auth);
+
+    // ปิด panel
+    setOpen(false);
+
+    // 🔥 กลับหน้า login (แล้วแต่ navigator ของคุณ)
+    navigation.replace("Login"); 
+    // หรือ navigation.navigate("Login");
+
+  } catch (error) {
+    console.log("LOGOUT ERROR:", error);
+  }
+};
+  // ✅ Listener 3: ประวัติถอนเงิน
+  useEffect(() => {
+    if (!data?.uid) return;
+
+    const q = query(
+      collection(db, "withdrawals"),
+      where("caregiverId", "==", data.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const withdrawn = snap.docs
+        .filter((d) => d.data().status === "approved")
+        .reduce((sum, d) => sum + (d.data().amount || 0), 0);
+
+      setTotalWithdrawn(withdrawn);
+    });
+
+    return () => unsubscribe();
+  }, [data?.uid]);
 
   const toggleProfile = () => {
     Animated.timing(slideAnim, {
@@ -88,8 +127,8 @@ export default function AppHeader() {
           <View style={styles.rightSection}>
             <Ionicons name="notifications-outline" size={24} color="#fff" />
             <View style={{ alignItems: "flex-end" }}>
-              <Text style={styles.balance}>฿{totalIncome.toLocaleString()}</Text>
-              <Text style={styles.subText}>รายได้รวม</Text>
+              <Text style={styles.balance}>฿{(totalIncome - totalWithdrawn).toLocaleString()}</Text>
+              <Text style={styles.subText}>ยอดเงินคงเหลือ</Text>
             </View>
           </View>
         </View>
@@ -128,7 +167,9 @@ export default function AppHeader() {
           <Text style={styles.menuItem}>ศูนย์ช่วยเหลือ</Text>
         </View>
 
-        <Text style={styles.logout}>ออกจากระบบ</Text>
+        <TouchableOpacity onPress={handleLogout}>
+          <Text style={styles.logout}>ออกจากระบบ</Text>
+        </TouchableOpacity>
       </Animated.View>
     </>
   );
