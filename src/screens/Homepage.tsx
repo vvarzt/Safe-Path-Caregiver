@@ -5,12 +5,13 @@ import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 import { onSnapshot } from "firebase/firestore";
 import React, { useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, Vibration } from "react-native";
 import AppHeader from "../components/AppHeader";
 import FaceScanModal from "../components/FaceScanModal";
 import { auth, db } from "../firebase";
 import { RootStackParamList } from "../navigation/AppNavigator";
-import { runTransaction } from "firebase/firestore";
+
+
 
 import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
 
@@ -25,6 +26,22 @@ import {
   View,
 } from "react-native";
 import { useSignup } from "../context/SignupContext";
+
+// ✅ ใหม่ — ใช้ Alert แบบ user (ทำงานได้ทุก platform / ทุก environment)
+function notifyNewJob(job: any) {
+  // สั่นมือถือก่อน แล้วค่อย alert
+  Vibration.vibrate([0, 300, 100, 300]); // pattern: รอ 0ms → สั่น 300ms → หยุด 100ms → สั่น 300ms
+
+  Alert.alert(
+    "🚑 มีงานใหม่เข้ามา!",
+    `${job.dateBooking} เวลา ${job.timeBooking}\nจาก: ${job.fromAddress}`,
+    [{ text: "ตกลง" }]
+  );
+}
+
+
+
+
 
 export default function Homepage() {
   type NavProp = NativeStackNavigationProp<RootStackParamList>;
@@ -41,6 +58,7 @@ export default function Homepage() {
   const [caregiver_Gender, setcaregiver_Gender] = useState<string | null>(null);
   const [showUpdateSuccess, setShowUpdateSuccess] = useState(false);
   const isWaitingApprove = activeJob?.update_cus === "wait_cus";
+  const seenJobIds = React.useRef<Set<string>>(new Set());
   const [review, setReview] = useState<{ score: number; comment: string }>({
     score: 0,
     comment: "",
@@ -110,6 +128,9 @@ export default function Homepage() {
     );
   };
 
+
+
+
   const handleUpdateCus = async () => {
     if (!activeJob?.id) return;
 
@@ -169,6 +190,20 @@ export default function Homepage() {
     ]);
   };
 
+  const isTodayBooking = (dateBooking: string): boolean => {
+    const now = new Date();
+    const day = now.getDate().toString();
+    const thaiMonthNames = [
+      "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน",
+      "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม",
+      "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
+    ];
+    const month = thaiMonthNames[now.getMonth()];
+
+    // เช็คว่า dateBooking มีวันและเดือนของวันนี้อยู่ไหม
+    return dateBooking.includes(day) && dateBooking.includes(month);
+  };
+
   const getUpdateCusLabel = () => {
     if (!activeJob?.update_cus) return "รับลูกค้าแล้ว";
     if (activeJob.update_cus === "received") return "ถึงปลายทางแล้ว";
@@ -216,6 +251,8 @@ export default function Homepage() {
     );
   };
 
+  // เพิ่ม useEffect ขอ permission ใน component
+
   useEffect(() => {
     if (!data?.uid) return;
 
@@ -244,6 +281,8 @@ export default function Homepage() {
     if (!data?.uid) return;
 
     const caregiverRef = doc(db, "caregivers", data.uid);
+    // เพิ่มฟังก์ชันนี้ไว้ใกล้ๆ scheduleBookingReminder
+
 
     const unsubscribe = onSnapshot(caregiverRef, async (snap) => {
 
@@ -283,14 +322,15 @@ export default function Homepage() {
       console.log("🔥 caregiver status:", c.statusWork);
 
       if (c.statusWork === "idle" || c.statusWork === "") {
-        // ✅ idle → เช็คว่าเพิ่ง wait อยู่ไหม (งานเสร็จ)
         if (waitingComplete) {
           setWaitingComplete(false);
-          setShowJobDone(true); // 🎉 แจ้งเตือนงานเสร็จ
+          setShowJobDone(true);
         }
-        setActiveJob(null);
-        setIsStarted(false);
-        console.log("✅ กลับโหมดหางาน");
+        // ✅ ไม่ต้อง reset ซ้ำ เพราะ booking snapshot จัดการแล้ว
+        if (!showJobDone) {
+          setActiveJob(null);
+          setIsStarted(false);
+        }
         return;
       }
 
@@ -360,37 +400,26 @@ export default function Homepage() {
     return () => unsubscribe();
   }, [data?.uid, waitingComplete]); // 👈 เพิ่ม waitingComplete ใน deps
 
-  useEffect(() => {
-    console.log("📊 gender:", data?.gender); // 👈 เพิ่มบรรทัดนี้
+  // เพิ่ม ref นี้ไว้ใน component (ข้างๆ prevListRef)
 
-    if (!caregiver_Gender) {
-      console.log("❌ gender ยังไม่มี");
-      return;
-    }
+
+  useEffect(() => {
+    if (!caregiver_Gender) return;
 
     const unsubscribe = onSnapshot(
       query(
         collection(db, "bookings"),
         where("status", "==", "pending"),
-        where("gender_Care", "in", [
-          "disabled",
-          caregiver_Gender,
-        ])
-
-
+        where("gender_Care", "in", ["disabled", caregiver_Gender])
       ),
       async (snapshot) => {
-        console.log("📦 snapshot size:", snapshot.size); // 👈 เพิ่ม
-        console.log("📊 caregiver_Gender:", caregiver_Gender);
-        snapshot.forEach(doc => {
-          console.log("📄 job data:", doc.data()); // 👈 เพิ่ม
-        });
-
         try {
-          console.log("🔥 Realtime update:", snapshot.size);
+          const todayDocs = snapshot.docs.filter(
+            (docSnap) => isTodayBooking(docSnap.data().dateBooking)
+          );
 
           const bookings = await Promise.all(
-            snapshot.docs.map(async (docSnap) => {
+            todayDocs.map(async (docSnap) => {
               const d = docSnap.data();
 
               let fullName = "ไม่พบชื่อ";
@@ -417,16 +446,12 @@ export default function Homepage() {
                 timeBooking: d.timeBooking || "-",
                 caregiver_Gender: d.gender_Care || "-",
                 equipment: d.equipment || [],
-
-                // ✅ ใช้ location ใหม่
                 fromAddress: d.fromLocation?.address || "-",
                 toAddress: d.toLocation?.address || "-",
-
                 fromLat: d.fromLocation?.lat || null,
                 fromLng: d.fromLocation?.lng || null,
                 toLat: d.toLocation?.lat || null,
                 toLng: d.toLocation?.lng || null,
-
                 fare: d.fare ?? 0,
                 status: d.status || "pending",
                 paymentMethod: d.paymentMethod || "-",
@@ -434,9 +459,22 @@ export default function Homepage() {
             })
           );
 
-          // ✅ filter pending เท่านั้น
-          console.log("✅ bookings ที่ได้:", bookings); // 👈 เพิ่ม
-          console.log("🎯 query gender:", caregiver_Gender);
+          // ✅ แจ้งเตือนเฉพาะงานที่ยังไม่เคยเห็น
+          const isFirstLoad = seenJobIds.current.size === 0;
+
+          for (const job of bookings) {
+            if (!seenJobIds.current.has(job.id)) {
+              seenJobIds.current.add(job.id);
+
+              if (!isFirstLoad) {
+                await notifyNewJob(job);
+                console.log("🔔 แจ้งเตือนงานใหม่:", job.id);
+              }
+            }
+          }
+
+          // ✅ ถ้า seenJobIds ยังว่างอยู่ = load ครั้งแรก → แค่ seed ไม่ต้องแจ้ง
+          // ถ้า snapshot เด้งมาอีกทีและมีงานใหม่ → แจ้ง
           setJobList(bookings);
         } catch (err) {
           console.log("❌ SNAPSHOT ERROR:", err);
@@ -445,12 +483,13 @@ export default function Homepage() {
         }
       },
       (error) => {
-        console.log("❌ SNAPSHOT ERROR:", error); // 👈 เพิ่มตรงนี้
-      });
+        console.log("❌ SNAPSHOT ERROR:", error);
+        setLoading(false);
+      }
+    );
 
-    // ✅ สำคัญมาก (cleanup กัน memory leak)
     return () => unsubscribe();
-  }, [caregiver_Gender]); // ✅ แก้ตรงนี้
+  }, [caregiver_Gender]);
 
   // ✅ คอย booking เปลี่ยนเป็น completed → แก้ statusWork เป็น idle
   useEffect(() => {
@@ -458,55 +497,57 @@ export default function Homepage() {
 
     const bookingRef = doc(db, "bookings", activeJob.id);
 
+
+
+    // ✅ ใน useEffect ที่ listen bookingRef
     const unsubscribe = onSnapshot(bookingRef, async (snap) => {
       if (!snap.exists()) return;
 
       const d = snap.data();
-      if (d.score || d.comment) {
+
+      if (d.score !== undefined || d.comment) {
         setReview({
-          score: d.score,
-          comment: d.comment,
+          score: d.score ?? 0,
+          comment: d.comment ?? "",
         });
       }
-      console.log("📦 booking status:", d.status);
 
-      // ❌ กรณีโดนยกเลิก
       if (d.status === "cancelled") {
-        console.log("❌ งานถูกยกเลิก");
-
         Alert.alert("งานถูกยกเลิก", "ลูกค้าได้ยกเลิกงานนี้แล้ว");
-
-        // reset state
         setActiveJob(null);
         setIsStarted(false);
         setWaitingComplete(false);
 
-        // 🔥 กลับไปโหมดหางาน
-        await updateDoc(doc(db, "caregivers", data.uid), {
-          statusWork: "idle",
-        });
-
-        return;
-      }
-
-      // ✅ กรณีงานเสร็จ (เหมือนเดิม)
-      if (d.status === "completed") {
-        try {
-          await updateDoc(doc(db, "bookings", activeJob.id), {
-            completedAt: new Date().toISOString(),
-          });
-
+        if (data?.uid) { // ✅ guard
           await updateDoc(doc(db, "caregivers", data.uid), {
             statusWork: "idle",
           });
+        }
+        return;
+      }
 
-          setWaitingComplete(false);
-          setShowJobDone(true);
+      if (d.status === "completed") {
+        try {
+          if (data?.uid) { // ✅ guard
+            await updateDoc(doc(db, "bookings", activeJob.id), {
+              completedAt: new Date().toISOString(),
+            });
+
+            await updateDoc(doc(db, "caregivers", data.uid), {
+              statusWork: "idle",
+            });
+          }
+
+          // ✅ set review ก่อน แล้วค่อย showJobDone
           setReview({
-            score: d.score,
-            comment: d.comment,
+            score: d.score ?? 0,
+            comment: d.comment ?? "",
           });
-          console.log("✅ งานเสร็จ");
+          setWaitingComplete(false);
+          setShowJobDone(true); // popup จะเห็น review ที่ set ไปแล้ว
+          setActiveJob(null);   // ✅ reset activeJob หลัง show popup
+          setIsStarted(false);
+
         } catch (err) {
           console.log("❌ COMPLETE ERROR:", err);
         }
@@ -519,66 +560,53 @@ export default function Homepage() {
   const fetchBookings = async () => {
     setLoading(true);
     try {
-      console.log("🔥 เริ่ม fetchBookings...");
+
 
       const snapshot = await getDocs(collection(db, "bookings"));
-      console.log("📦 จำนวน docs ใน bookings:", snapshot.size);
-
-      if (snapshot.empty) {
-        console.log("❌ ไม่มีข้อมูลใน collection bookings เลย");
-        setJobList([]);
-        return;
-      }
 
       const bookings = await Promise.all(
-        snapshot.docs.map(async (docSnap) => {
-          const d = docSnap.data();
+        snapshot.docs
+          .filter((docSnap) => isTodayBooking(docSnap.data().dateBooking))
+          .map(async (docSnap) => {
+            const d = docSnap.data();
 
-          let fullName = "ไม่พบชื่อ";
-          let phone = "-";
+            let fullName = "ไม่พบชื่อ";
+            let phone = "-";
 
-          if (d.userId) {
-            try {
-              const userSnap = await getDoc(doc(db, "users", d.userId));
-              if (userSnap.exists()) {
-                const u = userSnap.data();
-                fullName = u.fullname || u.fullName || u.name || "ไม่พบชื่อ";
-                phone = u.phone || "-";
-              }
-            } catch (e) {
-              console.log("❌ USER ERROR:", e);
+            if (d.userId) {
+              try {
+                const userSnap = await getDoc(doc(db, "users", d.userId));
+                if (userSnap.exists()) {
+                  const u = userSnap.data();
+                  fullName = u.fullname || u.fullName || u.name || "ไม่พบชื่อ";
+                  phone = u.phone || "-";
+                }
+              } catch (e) { }
             }
-          }
 
-          return {
-            id: docSnap.id,
-            fullName,
-            phone,
-            dateBooking: d.dateBooking || "-",
-            timeBooking: d.timeBooking || "-",
-            caregiver_Gender: d.caregiver_Gender || "-",
-            equipment: d.equipment || [],
-
-            // ✅ ใช้ location ใหม่
-            fromAddress: d.fromLocation?.address || "-",
-            toAddress: d.toLocation?.address || "-",
-
-            fromLat: d.fromLocation?.lat || null,
-            fromLng: d.fromLocation?.lng || null,
-            toLat: d.toLocation?.lat || null,
-            toLng: d.toLocation?.lng || null,
-
-            fare: d.fare ?? 0,
-            status: d.status || "pending",
-            paymentMethod: d.paymentMethod || "-",
-          };
-        })
+            return {
+              id: docSnap.id,
+              fullName,
+              phone,
+              dateBooking: d.dateBooking || "-",
+              timeBooking: d.timeBooking || "-",
+              caregiver_Gender: d.gender_Care || "-",
+              equipment: d.equipment || [],
+              fromAddress: d.fromLocation?.address || "-",
+              toAddress: d.toLocation?.address || "-",
+              fromLat: d.fromLocation?.lat || null,
+              fromLng: d.fromLocation?.lng || null,
+              toLat: d.toLocation?.lat || null,
+              toLng: d.toLocation?.lng || null,
+              fare: d.fare ?? 0,
+              status: d.status || "pending",
+              paymentMethod: d.paymentMethod || "-",
+            };
+          })
       );
+
       const pendingOnly = bookings.filter((job) => job.status === "pending");
       setJobList(pendingOnly);
-
-
-      console.log("✅ bookings ทั้งหมด:", JSON.stringify(bookings));
     } catch (error) {
       console.log("❌ FETCH ERROR:", error);
     } finally {

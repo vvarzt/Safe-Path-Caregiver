@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
 import React, { useEffect, useRef, useState } from "react";
 import { signOut } from "firebase/auth";
 import { auth } from "../firebase";
 import { useNavigation } from "@react-navigation/native";
+
 import {
   Animated,
   Image,
@@ -20,66 +21,59 @@ export default function AppHeader() {
   const [open, setOpen] = useState(false);
   const slideAnim = useRef(new Animated.Value(-300)).current;
   const navigation = useNavigation<any>();
+  const [avgRating, setAvgRating] = useState(0);
 
   // ✅ State สำหรับ stats
   const [pendingCount, setPendingCount] = useState(0);       // ออเดอร์วันนี้ (pending)
   const [completedCount, setCompletedCount] = useState(0);   // ออเดอร์ทั้งหมดที่ทำเสร็จ
   const [totalIncome, setTotalIncome] = useState(0);         // รายได้รวม 60%
   const [totalWithdrawn, setTotalWithdrawn] = useState(0);   // ยอดถอนแล้ว
+  const balance = Math.max(totalIncome - totalWithdrawn, 0);
 
-  // ✅ Listener 1: นับ pending bookings
-  useEffect(() => {
-    const q = query(
-      collection(db, "bookings"),
-      where("status", "==", "pending")
-    );
 
-    const unsubscribe = onSnapshot(q, (snap) => {
-      setPendingCount(snap.size);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  // ✅ Listener 2: นับงานที่ caregiver คนนี้ทำเสร็จแล้ว + คำนวณรายได้
+  // เพิ่ม Listener completedCount
+  // ✅ แก้ไข: ใช้ fare แทน price + คำนวณ avgRating จาก bookings จริง
   useEffect(() => {
     if (!data?.uid) return;
 
     const q = query(
       collection(db, "bookings"),
-      where("status", "==", "completed"),
-      where("caregiverId", "==", data.uid)
+      where("caregiverId", "==", data.uid),
+      where("status", "==", "completed")
     );
 
     const unsubscribe = onSnapshot(q, (snap) => {
       setCompletedCount(snap.size);
 
-      const income = snap.docs.reduce((sum, doc) => {
-        const fare = doc.data().fare || 0;
-        return sum + fare * 0.6;
-      }, 0);
+      let income = 0;
+      let totalScore = 0;
+      let ratedCount = 0;
+
+      snap.docs.forEach((d) => {
+        const booking = d.data();
+        // ✅ ใช้ fare (ไม่ใช่ price)
+        income += (booking.fare || 0) * 0.6;
+
+        // ✅ คำนวณ avgRating จาก score จริง
+        if (booking.score) {
+          totalScore += booking.score;
+          ratedCount++;
+        }
+      });
 
       setTotalIncome(Math.round(income));
+      setAvgRating(
+        ratedCount > 0
+          ? Number((totalScore / ratedCount).toFixed(1))
+          : 0
+      );
     });
 
     return () => unsubscribe();
   }, [data?.uid]);
-const handleLogout = async () => {
-  try {
-    await signOut(auth);
 
-    // ปิด panel
-    setOpen(false);
-
-    // 🔥 กลับหน้า login (แล้วแต่ navigator ของคุณ)
-    navigation.replace("Login"); 
-    // หรือ navigation.navigate("Login");
-
-  } catch (error) {
-    console.log("LOGOUT ERROR:", error);
-  }
-};
-  // ✅ Listener 3: ประวัติถอนเงิน
+  // ✅ Listener 2: นับงานที่ caregiver คนนี้ทำเสร็จแล้ว + คำนวณรายได้
+  // ✅ Listener ถอนเงิน (ต้องมี)
   useEffect(() => {
     if (!data?.uid) return;
 
@@ -90,14 +84,84 @@ const handleLogout = async () => {
 
     const unsubscribe = onSnapshot(q, (snap) => {
       const withdrawn = snap.docs
-        .filter((d) => d.data().status === "approved")
-        .reduce((sum, d) => sum + (d.data().amount || 0), 0);
+        .map((d) => d.data())
+        .filter((w: any) => w.status === "approved") // ✅ สำคัญมาก
+        .reduce((sum: number, w: any) => sum + (w.amount || 0), 0);
 
       setTotalWithdrawn(withdrawn);
     });
 
     return () => unsubscribe();
   }, [data?.uid]);
+
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+
+      // ปิด panel
+      setOpen(false);
+
+      // 🔥 กลับหน้า login (แล้วแต่ navigator ของคุณ)
+      navigation.replace("Login");
+      // หรือ navigation.navigate("Login");
+
+    } catch (error) {
+      console.log("LOGOUT ERROR:", error);
+    }
+  };
+  // ✅ Listener 3: ประวัติถอนเงิน
+  // ✅ แทน Listener 1 ทั้งหมด
+  useEffect(() => {
+    if (!data?.uid) return;
+
+    let bookingUnsub: (() => void) | null = null;
+
+    // ─── Step 1: Listen gender แบบ real-time ───
+    const caregiverUnsub = onSnapshot(
+      doc(db, "caregivers", data.uid),
+      (caregiverSnap) => {
+        if (!caregiverSnap.exists()) return;
+
+        const gender = caregiverSnap.data().gender;
+        if (!gender) return;
+
+        // ─── Step 2: ยกเลิก booking listener เดิมก่อน ───
+        if (bookingUnsub) bookingUnsub();
+
+        // ─── Step 3: Subscribe bookings ใหม่ตาม gender ───
+        const q = query(
+          collection(db, "bookings"),
+          where("status", "==", "pending"),
+          where("gender_Care", "in", [gender, "disabled"])
+        );
+
+        bookingUnsub = onSnapshot(q, (snap) => {
+          const today = new Date();
+          const thaiMonthNames = [
+            "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน",
+            "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม",
+            "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
+          ];
+          const day = today.getDate().toString();
+          const month = thaiMonthNames[today.getMonth()];
+
+          const todayBookings = snap.docs.filter((docSnap) => {
+            const raw = docSnap.data().dateBooking || "";
+            return raw.includes(day) && raw.includes(month);
+          });
+
+          setPendingCount(todayBookings.length);
+        });
+      }
+    );
+
+    // ─── Cleanup ทั้งคู่ ───
+    return () => {
+      caregiverUnsub();
+      if (bookingUnsub) bookingUnsub();
+    };
+  }, [data?.uid]); // ✅ depend on uid เท่านั้น
 
   const toggleProfile = () => {
     Animated.timing(slideAnim, {
@@ -127,7 +191,9 @@ const handleLogout = async () => {
           <View style={styles.rightSection}>
             <Ionicons name="notifications-outline" size={24} color="#fff" />
             <View style={{ alignItems: "flex-end" }}>
-              <Text style={styles.balance}>฿{(totalIncome - totalWithdrawn).toLocaleString()}</Text>
+              <Text style={styles.balance}>
+                ฿{balance.toLocaleString()}
+              </Text>
               <Text style={styles.subText}>ยอดเงินคงเหลือ</Text>
             </View>
           </View>
@@ -136,7 +202,7 @@ const handleLogout = async () => {
         <View style={styles.statsRow}>
           <StatBox number={pendingCount.toString()} label="ออเดอร์วันนี้" />
           <StatBox number={completedCount.toString()} label="ออเดอร์ทั้งหมด" />
-          <StatBox number="4.5" label="คะแนนเฉลี่ย" />
+          <StatBox number={avgRating.toString()} label="คะแนนเฉลี่ย" />
         </View>
       </View>
 
@@ -163,8 +229,26 @@ const handleLogout = async () => {
         </View>
 
         <View style={styles.menu}>
-          <Text style={styles.menuItem}>การตั้งค่า</Text>
-          <Text style={styles.menuItem}>ศูนย์ช่วยเหลือ</Text>
+          <TouchableOpacity
+            style={styles.menuRow}
+            onPress={() => {
+              setOpen(false);
+              navigation.navigate("Profile");
+            }}
+          >
+            <Ionicons name="person-outline" size={20} />
+            <Text style={styles.menuItem}>ข้อมูลส่วนตัว</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.menuRow}>
+            <Ionicons name="settings-outline" size={20} />
+            <Text style={styles.menuItem}>การตั้งค่า</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.menuRow}>
+            <Ionicons name="help-circle-outline" size={20} />
+            <Text style={styles.menuItem}>ศูนย์ช่วยเหลือ</Text>
+          </TouchableOpacity>
         </View>
 
         <TouchableOpacity onPress={handleLogout}>
@@ -254,4 +338,14 @@ const styles = StyleSheet.create({
     marginTop: 20,
     fontWeight: "600",
   },
+
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgb(26, 139, 102)",
+  },
+
 });

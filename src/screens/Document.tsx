@@ -1,7 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import AppHeader from "../components/AppHeader";
+import * as Print from "expo-print";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { db } from "../firebase";
 import {
   Animated,
   Image,
@@ -14,14 +17,98 @@ import {
 import { useSignup } from "../context/SignupContext";
 
 export default function Document() {
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [selectedMonth, setSelectedMonth] = useState(new Date());
   const { data } = useSignup();
-  const navigation = useNavigation<any>();
 
-  const [activeTab, setActiveTab] = useState("doc");
+  const handleExport = async () => {
+    const rows = dailyList.map(item => `
+    <tr>
+      <td>${item.date}</td>
+      <td>${item.count}</td>
+      <td>${Math.round(item.total).toLocaleString()}</td>
+    </tr>
+  `).join("");
+
+    const html = `
+    <html>
+      <body style="font-family: sans-serif; padding: 20px;">
+        <h2>รายงานรายได้ Caregiver</h2>
+
+        <p>เดือน: ${selectedMonth.toLocaleDateString("th-TH", {
+      month: "long",
+      year: "numeric",
+    })}</p>
+
+        <h3>สรุป</h3>
+        <p>จำนวนงาน: ${totalJobs} งาน</p>
+        <p>รายได้รวม: ${Math.round(totalIncome).toLocaleString()} บาท</p>
+
+        <h3>รายละเอียดรายวัน</h3>
+        <table border="1" cellpadding="8" cellspacing="0" width="100%">
+          <tr>
+            <th>วันที่</th>
+            <th>จำนวนงาน</th>
+            <th>รายได้</th>
+          </tr>
+          ${rows}
+        </table>
+      </body>
+    </html>
+  `;
+
+    await Print.printAsync({ html });
+  };
 
   // ===== PROFILE SLIDE =====
   const [open, setOpen] = useState(false);
   const slideAnim = useRef(new Animated.Value(-300)).current;
+
+  const filteredBookings = bookings.filter((b) => {
+    if (!b.completedAt) return false;
+
+    const date = new Date(b.completedAt);
+
+    return (
+      date.getMonth() === selectedMonth.getMonth() &&
+      date.getFullYear() === selectedMonth.getFullYear()
+    );
+  });
+
+  const totalJobs = filteredBookings.length;
+
+  const totalIncome = filteredBookings.reduce((sum, b) => {
+    return sum + (b.fare || 0) * 0.6;
+  }, 0);
+
+  const groupedByDate: Record<string, any[]> = {};
+
+  filteredBookings.forEach((b) => {
+    const date = new Date(b.completedAt).toLocaleDateString("th-TH");
+
+    if (!groupedByDate[date]) {
+      groupedByDate[date] = [];
+    }
+
+    groupedByDate[date].push(b);
+  });
+
+  const dailyList = Object.keys(groupedByDate)
+  .map((date) => {
+    const items = groupedByDate[date];
+
+    const total = items.reduce(
+      (sum, b) => sum + (b.fare || 0) * 0.6,
+      0
+    );
+
+    return {
+      date,
+      count: items.length,
+      total,
+    };
+  })
+  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const toggleProfile = () => {
     if (open) {
@@ -40,6 +127,33 @@ export default function Document() {
     }
   };
 
+  const changeMonth = (offset: number) => {
+    const newDate = new Date(selectedMonth);
+    newDate.setMonth(newDate.getMonth() + offset);
+    setSelectedMonth(newDate);
+  };
+
+  useEffect(() => {
+    if (!data?.uid) return;
+
+    const q = query(
+      collection(db, "bookings"),
+      where("status", "==", "completed"),
+      where("caregiverId", "==", data.uid)
+    );
+
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      }));
+
+      setBookings(list);
+    });
+
+    return () => unsub();
+  }, [data?.uid]);
+
   return (
     <View style={styles.container}>
       {/* HEADER */}
@@ -53,46 +167,60 @@ export default function Document() {
         <View style={styles.card}>
           <Text style={{ marginBottom: 8 }}>เลือกเดือน</Text>
           <View style={styles.dropdown}>
-            <Text>เลือกเดือน</Text>
-            <Ionicons name="chevron-down" size={18} />
+            <TouchableOpacity onPress={() => changeMonth(-1)}>
+              <Ionicons name="chevron-back" size={18} />
+            </TouchableOpacity>
+
+            <Text>
+              {selectedMonth.toLocaleDateString("th-TH", {
+                month: "long",
+                year: "numeric",
+              })}
+            </Text>
+
+            <TouchableOpacity onPress={() => changeMonth(1)}>
+              <Ionicons name="chevron-forward" size={18} />
+            </TouchableOpacity>
           </View>
         </View>
 
         {/* SUMMARY */}
         <View style={styles.summaryBox}>
           <View style={styles.summaryItem}>
-            <Text>จำนวนเที่ยว</Text>
-            <Text style={styles.bigText}>20</Text>
+            <Text>จำนวนงาน</Text>
+            <Text style={styles.bigText}>{totalJobs}</Text>
           </View>
           <View style={styles.summaryItem}>
             <Text>รายได้รวม</Text>
-            <Text style={styles.bigText}>฿25,000</Text>
+            <Text style={styles.bigText}>
+              ฿{Math.round(totalIncome).toLocaleString()}
+            </Text>
           </View>
         </View>
 
         {/* LIST */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>สรุปรายได้ประจำเดือน</Text>
-
-          <View style={styles.row}>
-            <View>
-              <Text>01/10/2568</Text>
-              <Text style={styles.subGray}>2 ออเดอร์</Text>
+          {dailyList.length === 0 && (
+            <Text style={{ textAlign: "center", color: "#9CA3AF" }}>
+              ไม่มีข้อมูลในเดือนนี้
+            </Text>
+          )}
+          {dailyList.map((item, index) => (
+            <View key={index} style={styles.row}>
+              <View>
+                <Text>{item.date}</Text>
+                <Text style={styles.subGray}>{item.count} ออเดอร์</Text>
+              </View>
+              <Text style={styles.money}>
+                ฿{Math.round(item.total).toLocaleString()}
+              </Text>
             </View>
-            <Text style={styles.money}>฿1,000</Text>
-          </View>
-
-          <View style={styles.row}>
-            <View>
-              <Text>02/10/2568</Text>
-              <Text style={styles.subGray}>3 ออเดอร์</Text>
-            </View>
-            <Text style={styles.money}>฿1,500</Text>
-          </View>
+          ))}
         </View>
 
         {/* DOWNLOAD */}
-        <TouchableOpacity style={styles.downloadBtn}>
+        <TouchableOpacity style={styles.downloadBtn} onPress={handleExport}>
           <Ionicons name="download-outline" size={20} color="#fff" />
           <Text style={{ color: "#fff" }}>
             ดาวน์โหลดเอกสารรายได้ (PDF)
@@ -135,7 +263,7 @@ export default function Document() {
         <Text style={styles.logout}>ออกจากระบบ</Text>
       </Animated.View>
 
-      
+
     </View>
   );
 }

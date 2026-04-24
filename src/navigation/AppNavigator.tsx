@@ -9,6 +9,7 @@ import SignupSuccess from "../screens/SignupSuccess";
 import WelcomeScreen from "../screens/Welcome";
 
 import MainTabs from "./MainTabs"; // ⭐ import tab
+import Profilescreen from "../screens/ProfileScreen";
 // import PendingScreen from "../screens/PendingScreen";
 
 export type RootStackParamList = {
@@ -18,8 +19,9 @@ export type RootStackParamList = {
   Signup2: undefined;
   Signup3: undefined;
   SignupSuccess: undefined;
-  MainTabs: undefined; // ⭐ เปลี่ยนจาก Homepage
+  MainTabs: undefined;
   PendingScreen: undefined;
+  Profile: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -35,6 +37,7 @@ export default function AppNavigator() {
         <Stack.Screen name="Signup2" component={Signup2Screen} />
         <Stack.Screen name="Signup3" component={Signup3Screen} />
         <Stack.Screen name="SignupSuccess" component={SignupSuccess} />
+        <Stack.Screen name="Profile" component={Profilescreen} />
         {/* <Stack.Screen name="PendingScreen" component={PendingScreen} /> */}
 
         {/* 🔥 หลัง login เข้า tab */}

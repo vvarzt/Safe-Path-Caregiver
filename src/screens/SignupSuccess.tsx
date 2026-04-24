@@ -5,6 +5,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/AppNavigator";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import { Ionicons } from "@expo/vector-icons";
 
 type NavProp = NativeStackNavigationProp<RootStackParamList, "SignupSuccess">;
 
@@ -50,7 +51,7 @@ export default function SignupSuccessScreen() {
 
       {/* ===== CONTENT ===== */}
       <View style={styles.content}>
-        <ActivityIndicator size="large" color="#43B7A5" />
+        <Ionicons name="hourglass-outline" size={40} color="#43B7A5" />
 
         <Text style={styles.title}>
           รอตรวจสอบเอกสาร
