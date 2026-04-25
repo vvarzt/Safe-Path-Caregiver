@@ -4,6 +4,11 @@
 
 ---
 
+## ติดตั้งนะครับ
+
+1  npm install --force or --legacy-peer-deps
+3  npx expo start --go   (รันโค้ด)
+
 ## 📁 โครงสร้างโปรเจค
 
 ```
