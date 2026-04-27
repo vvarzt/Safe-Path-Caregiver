@@ -146,7 +146,7 @@ export default function History() {
           <Text style={styles.sectionTitle}>ประวัติการทำงาน</Text>
         }
         renderItem={({ item }) => {
-          const income = Math.round((item.fare || 0) * 0.6);
+          const income = Math.round((item.fare || 0) * 0.9);
 
           return (
             <TouchableOpacity
@@ -306,7 +306,7 @@ export default function History() {
 
                 <Text style={styles.priceLabel}>รายได้ </Text>
                 <Text style={styles.income}>
-                  ฿{Math.round((selectedJob.fare || 0) * 0.6).toLocaleString()}
+                  ฿{Math.round((selectedJob.fare || 0) * 0.9).toLocaleString()}
                 </Text>
               </View>
 

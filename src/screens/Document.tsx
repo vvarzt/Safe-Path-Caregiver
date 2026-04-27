@@ -78,7 +78,7 @@ export default function Document() {
   const totalJobs = filteredBookings.length;
 
   const totalIncome = filteredBookings.reduce((sum, b) => {
-    return sum + (b.fare || 0) * 0.6;
+    return sum + (b.fare || 0) * 0.9;
   }, 0);
 
   const groupedByDate: Record<string, any[]> = {};
@@ -98,7 +98,7 @@ export default function Document() {
     const items = groupedByDate[date];
 
     const total = items.reduce(
-      (sum, b) => sum + (b.fare || 0) * 0.6,
+      (sum, b) => sum + (b.fare || 0) * 0.9,
       0
     );
 
