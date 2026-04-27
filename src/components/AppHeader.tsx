@@ -26,7 +26,7 @@ export default function AppHeader() {
   // ✅ State สำหรับ stats
   const [pendingCount, setPendingCount] = useState(0);       // ออเดอร์วันนี้ (pending)
   const [completedCount, setCompletedCount] = useState(0);   // ออเดอร์ทั้งหมดที่ทำเสร็จ
-  const [totalIncome, setTotalIncome] = useState(0);         // รายได้รวม 60%
+  const [totalIncome, setTotalIncome] = useState(0);         // รายได้รวม 90%
   const [totalWithdrawn, setTotalWithdrawn] = useState(0);   // ยอดถอนแล้ว
   const balance = Math.max(totalIncome - totalWithdrawn, 0);
 
@@ -52,7 +52,7 @@ export default function AppHeader() {
       snap.docs.forEach((d) => {
         const booking = d.data();
         // ✅ ใช้ fare (ไม่ใช่ price)
-        income += (booking.fare || 0) * 0.6;
+        income += (booking.fare || 0) * 0.9;
 
         // ✅ คำนวณ avgRating จาก score จริง
         if (booking.score) {

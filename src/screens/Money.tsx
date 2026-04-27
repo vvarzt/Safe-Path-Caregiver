@@ -77,7 +77,7 @@ export default function Money() {
 
       snap.docs.forEach((d) => {
         const booking = d.data();
-        const income = (booking.fare || 0) * 0.6;
+        const income = (booking.fare || 0) * 0.9;
 
         // ✅ รองรับทั้ง Timestamp และ ISO string
         const raw = booking.completedAt;
@@ -182,7 +182,7 @@ export default function Money() {
           paymentId: paymentDoc?.id || null,
           paymentMethod: bookingData.paymentMethod || "-",
           fare: bookingData.fare || 0,
-          income: Math.round((bookingData.fare || 0) * 0.6),
+          income: Math.round((bookingData.fare || 0) * 0.9),
           completedAt: bookingData.completedAt || null,
           fromAddress: bookingData.fromLocation?.address || "-",
           toAddress: bookingData.toLocation?.address || "-",
